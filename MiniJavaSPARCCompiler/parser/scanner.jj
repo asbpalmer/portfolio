@@ -1,0 +1,586 @@
+PARSER_BEGIN(TokenGetter)
+package parser.source;
+import syntax.*;
+import java.util.ArrayList;
+import java.lang.Integer;
+public class TokenGetter {}
+PARSER_END(TokenGetter)
+
+TOKEN : {
+    // basic definitions
+      <#DIGIT : ["0"-"9"]>
+    | <#LETTER : ["a"-"z", "A"-"Z"]>
+
+    //Java reserved words that are allowed in MiniJava
+    | <CLASS : "class">
+    | <PUBLIC: "public">
+    | <STATIC: "static">
+    | <EXTENDS: "extends">
+    | <INT: "int">
+    | <NEW: "new">
+    | <RECORD: "record">
+    | <TRUE: "true">
+    | <FALSE: "false">
+    | <NULL: "null">
+    | <IF: "if">
+    | <BOOLEAN : "boolean">
+    | <WHILE: "while">
+    | <ELSE: "else">
+    | <THIS: "this">
+	| <RETURN: "return">
+	| <VOID: "void">
+
+	//general symbols
+    | <SEMICOLON: ";">
+    | <LEFT_PAREN: "(">
+    | <RIGHT_PAREN: ")">
+    | <LEFT_BRACE: "{">
+    | <RIGHT_BRACE: "}">
+    | <LEFT_BRACKET: "[">
+    | <RIGHT_BRACKET: "]">
+    | <DOT: ".">
+    | <COMMA: ",">
+    // | <SINGLE_QUOTE: "'"> // valid Java, but not MiniJava
+    // | <DOUBLE_QUOTE: "\""> // valid Java, but not MiniJava
+    // | <BACKSLASH: "\\"> // valid Java, but not MiniJava
+    // | <FORWARD_SLASH: "/"> // valid Java, but not MiniJava
+    // | <PERCENT: "%"> // valid Java, but not MiniJava
+    // | <COLON: ":"> // valid Java, but not MiniJava
+
+   // arithmatic symbols
+    | <PLUS: "+">
+    | <MINUS: "-">
+    | <MULTIPLY: "*">
+    // | <EXPONENT: "^"> // valid Java, but not MiniJava
+    | <ASSIGNMENT: "=">
+
+    // boolean operators
+    | <EXCLAMATION: "!">
+    // | <EQUALS: "=="> // valid Java, but not MiniJava
+    | <LESS_THAN: "<">
+    // | <GREATER_THAN: ">"> // valid Java, but not MiniJava
+    | <BOOL_AND: "&&">
+    // | <BOOL_OR: "||"> // valid Java, but not MiniJava
+
+    // Print token
+    | <PRINT: "System.out.println">
+
+    // Length token
+    | <LENGTH: "length">
+
+    // Main class identifier
+    | <MAIN: "main">
+
+    // General MiniJava symbols
+    | <INTEGER_LITERAL : (["1"-"9"])(<DIGIT>)*|"0">
+	
+    // Reserved words are illegal, as are non-space, non-letter characters that have made it to this point
+    | <ILLEGAL : ~["\n","\r","\t","\b"," ", "a"-"z", "A"-"Z"]
+    | "import" | "try" | "except" | "goto" | "abstract" | "continue" | "for" | "switch" | "assert"
+    | "default" | "package" | "synchronized" | "do"| "private" | "break" | "double"
+    | "implements" | "protected" | "throw" | "byte" | "throws" | "case" | "enum" | "instanceof" | "return"
+    | "transient" | "catch" | "short" | "char" | "final" | "interface" | "finally" | "long" | "strictfp"
+    | "volatile" | "const" | "float" | "native" | "super" | "_" | "exports" | "opens" | "requires"
+    | "uses" | "module" | "permits" | "sealed" | "var" | "non-sealed" | "provides" | "to" | "with" | "open"
+    | "transitive" | "yield" | "put" | "==" | "||" | "^" | "'" | "\"" | "\\" | "/" | "%" | ":" | ">">
+
+    // For public static void main(String args[]) we need to define "String"
+    | <STRING: "String">
+
+	// Define identifiers (note illegal will catch non-MiniJava words
+    | <IDENTIFIER : (<LETTER>) (<LETTER>|<DIGIT>|"_")*>
+
+}
+
+//skip white space and comments
+SKIP : {
+       "\n"|"\r\n"|"\n\r"|"\r"|"\t"|"\b"|" "
+    | <"//" (~["\n", "\r"])* ("\n"|"\r\n"|"\n\r"|"\r")>
+    | <"/*" (~["*"])* "*" (~["*","/"] (~["*"])* "*" | "*")* "/">
+}
+
+Program ProgramEntry(String fileName, int[] errorLoc):
+{ MainClass m; ClassDecl c; final ArrayList <ClassDecl> cs = new ArrayList<ClassDecl>(); Program ret = null;}
+{
+    try {
+         (m = MainClassProd(fileName, errorLoc))
+            ((c = ClassDeclProd(fileName, errorLoc) {cs.add(c); })
+                (c = ClassDeclProd(fileName, errorLoc){cs.add(c);})*)?
+         <EOF>
+         {ret = new Program(m, cs);}
+    } catch (ParseException err){
+        handleError(err, CLASS, fileName, errorLoc);
+        ret = null;
+    }
+    {return ret;}
+}
+
+MainClass MainClassProd(String fileName, int[] errorLoc):
+{Token mainName, argsName; Statement s; MainClass ret = null;}
+{
+    try {
+        <CLASS> (mainName = <IDENTIFIER>) <LEFT_BRACE>
+            <PUBLIC> <STATIC> <VOID> <MAIN> <LEFT_PAREN>
+                <STRING> <LEFT_BRACKET> <RIGHT_BRACKET> (argsName = <IDENTIFIER>)
+            <RIGHT_PAREN> <LEFT_BRACE>
+                s = StatementProd(fileName, errorLoc)
+            <RIGHT_BRACE>
+        <RIGHT_BRACE>
+        { ret = new MainClass(new Identifier(mainName.beginLine, mainName.beginColumn, mainName.image),
+                              new Identifier(argsName.beginLine, argsName.beginColumn, argsName.image), s);}
+    } catch (ParseException err) {
+        handleError(err, CLASS, fileName, errorLoc);
+        ret = null;
+    }
+    {return ret;}
+}
+
+ClassDecl ClassDeclProd(String fileName, int[] errorLoc):
+{
+    Token nt, et; Identifier field, mName;
+    FieldDecl f; final ArrayList <FieldDecl> fs = new ArrayList<FieldDecl>();
+    MethodDecl m; final ArrayList <MethodDecl> ms = new ArrayList<MethodDecl>();
+    Type t; ArrayList<FormalDecl> formals = new ArrayList<FormalDecl>();
+    ArrayList<Statement> assigns = new ArrayList<Statement>();
+    ClassDecl ret = null;}
+{
+    try {
+        <CLASS> (nt = <IDENTIFIER>)
+        (((<LEFT_BRACE> (f = FieldDeclProd(fileName, errorLoc) {fs.add(f);})*
+            (m = MethodDeclProd(fileName, errorLoc) {ms.add(m);})* <RIGHT_BRACE>)
+            {ret = new SimpleClassDecl(
+                new Identifier(nt.beginLine, nt.beginColumn, nt.image),
+                fs, ms
+            );})
+        |  ((<EXTENDS> (et = <IDENTIFIER>)
+            <LEFT_BRACE> (f = FieldDeclProd(fileName, errorLoc) { fs.add(f); })*
+            (m = MethodDeclProd(fileName, errorLoc) { ms.add(m); })* <RIGHT_BRACE>)
+            {ret = new ExtendingClassDecl(
+                new Identifier(nt.beginLine, nt.beginColumn, nt.image),
+                new Identifier(et.beginLine, et.beginColumn, et.image),
+                fs, ms
+            );}))
+        // records come with one function for each of their fields
+        // but initializing a record is two things: allocating the object and assigning the values
+        // with a cheeky addition to our expressions, we can handle this
+        |  (<RECORD> nt = <IDENTIFIER> <LEFT_PAREN>
+            // each new [Type ID] pair will also mean a new method, a new field
+            // and a new formal and assign statement for our _init function that will store all those values
+            ( (( t = TypeProd(fileName, errorLoc)  et = <IDENTIFIER>
+                {
+                    mName = new Identifier(et.beginLine, et.beginColumn, et.image);
+                    field = new Identifier(et.beginLine, et.beginColumn, nt.image.concat(et.image));
+                    ms.add(new MethodDecl(t, mName, new ArrayList<FormalDecl>(), new ArrayList<LocalDecl>(),
+                        new ArrayList<Statement>(), new IdentifierExp(et.beginLine, et.beginColumn, field.toString())));
+                    fs.add(new FieldDecl(t, field));
+                    formals.add(new FormalDecl(t, mName));
+                    assigns.add(new Assign(field, new IdentifierExp(et.beginLine, et.beginColumn, et.image)));
+                })
+                // we may have more than one field, seperated by a comma
+                // so we need to account for that too
+                (<COMMA> t = TypeProd(fileName, errorLoc) et = <IDENTIFIER>
+                {
+                    mName = new Identifier(et.beginLine, et.beginColumn, et.image);
+                    field = new Identifier(et.beginLine, et.beginColumn, nt.image.concat(et.image));
+                    ms.add(new MethodDecl(t, mName, new ArrayList<FormalDecl>(), new ArrayList<LocalDecl>(),
+                        new ArrayList<Statement>(), new IdentifierExp(et.beginLine, et.beginColumn, field.toString())));
+                    fs.add(new FieldDecl(t, field));
+                    formals.add(new FormalDecl(t, mName));
+                    assigns.add(new Assign(field, new IdentifierExp(et.beginLine, et.beginColumn, et.image)));
+                }
+                )*)?
+            ) <RIGHT_PAREN> <LEFT_BRACE> <RIGHT_BRACE> <SEMICOLON>
+            // now, with all our fields found, we can add the initialize function and return the class declaration
+            { ms.add(new MethodDecl(new IdentifierType(nt.beginLine, nt.beginColumn, nt.image),
+                        new Identifier(nt.beginLine, nt.beginColumn, "_init"),
+                        formals, new ArrayList<LocalDecl>(), assigns, new This(nt.beginLine, nt.beginColumn)));
+             ret = new SimpleClassDecl(new Identifier(nt.beginLine, nt.beginColumn, nt.image), fs, ms); } )
+    } catch (ParseException err) {
+        handleError(err, RIGHT_BRACE, fileName, errorLoc);
+        ret = null;
+    }
+    { return ret; }
+}
+
+Type TypeProd(String fileName, int[] errorLoc):
+{Token t; Type ret = null;}
+{
+    try {
+        LOOKAHEAD(2)
+        ((t = <INT> { ret = Type.THE_INTEGER_TYPE; })
+                ((<LEFT_BRACKET> <RIGHT_BRACKET>) {ret = Type.THE_INT_ARRAY_TYPE; })?)
+        |  (t = <BOOLEAN> { ret = Type.THE_BOOLEAN_TYPE; })
+        |  ((t = <IDENTIFIER>) { ret = new IdentifierType(t.beginLine, t.beginColumn, t.image);})
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        ret = null;
+    }
+    { return ret;}
+}
+
+FieldDecl FieldDeclProd(String fileName, int[] errorLoc):
+{Type type; Token t; FieldDecl ret = null;}
+{
+    try {
+        ( type = TypeProd(fileName, errorLoc) ) (t = <IDENTIFIER>) <SEMICOLON>
+        { ret = new FieldDecl(type, new Identifier(t.beginLine, t.beginColumn, t.image));}
+    } catch (ParseException err){
+       handleError(err, SEMICOLON, fileName, errorLoc);
+       ret = null;
+    }
+    { return ret; }
+}
+
+FormalDecl FormalDeclProd(String fileName, int[] errorLoc):
+{Type type; Token t; FormalDecl ret = null;}
+{
+    try {
+        ( type = TypeProd(fileName, errorLoc) ) (t = <IDENTIFIER>)
+        { ret = new FormalDecl(type, new Identifier(t.beginLine, t.beginColumn, t.image));}
+    } catch (ParseException err){
+       handleError(err, SEMICOLON, fileName, errorLoc);
+       ret = null;
+    }
+    { return ret; }
+}
+
+LocalDecl LocalDeclProd(String fileName, int[] errorLoc):
+{Type type; Token t; LocalDecl ret = null;}
+{
+    try {
+        ( type = TypeProd(fileName, errorLoc) ) (t = <IDENTIFIER>) <SEMICOLON>
+        { ret = new LocalDecl(type, new Identifier(t.beginLine, t.beginColumn, t.image));}
+    } catch (ParseException err){
+       handleError(err, SEMICOLON, fileName, errorLoc);
+       ret = null;
+    }
+    { return ret; }
+}
+
+MethodDecl MethodDeclProd(String fileName, int[] errorLoc):
+{
+     Type type; Token t;
+     FormalDecl arg; final ArrayList <FormalDecl> args = new ArrayList<FormalDecl>();
+     LocalDecl loc; final ArrayList <LocalDecl> locs = new ArrayList<LocalDecl>();
+     Statement s; final ArrayList <Statement> sList = new ArrayList<Statement>();
+     Expression e1;
+     MethodDecl ret = null;
+}
+{
+    try {
+        <PUBLIC> (type = TypeProd(fileName, errorLoc) ) (t = <IDENTIFIER>) <LEFT_PAREN>
+            ( LOOKAHEAD(2) (arg = FormalDeclProd(fileName, errorLoc)) {args.add(arg);}
+                (<COMMA> (arg = FormalDeclProd(fileName, errorLoc)) {args.add(arg);})*)?
+        <RIGHT_PAREN> <LEFT_BRACE>
+            ( LOOKAHEAD(2) loc = LocalDeclProd(fileName, errorLoc) {locs.add(loc);} )*
+            ( s = StatementProd(fileName, errorLoc) {sList.add(s);} )*
+            <RETURN> (e1 = ExpressionProd(fileName, errorLoc)) <SEMICOLON>
+        <RIGHT_BRACE>
+        { ret = new MethodDecl(type, new Identifier(t.beginLine, t.beginColumn, t.image), args, locs, sList, e1);}
+    } catch (ParseException err){
+        handleError(err, RIGHT_BRACE, fileName, errorLoc);
+        ret = null;
+    }
+    { return ret; }
+}
+
+Statement StatementProd(String fileName, int[] errorLoc):
+{
+    Statement s1=null, s2=null; final ArrayList <Statement> sList = new ArrayList<Statement>();
+    Expression e1, e2; Token t;
+    Statement ret = null;
+}
+{
+    try{
+        ((<LEFT_BRACE> (s1 = StatementProd(fileName, errorLoc) {sList.add(s1);})* <RIGHT_BRACE>)
+                {s1 = new Block(sList);})
+        | ((t = <IF> <LEFT_PAREN> (e1 = ExpressionProd(fileName, errorLoc) ) <RIGHT_PAREN>
+            (s1 = StatementProd(fileName, errorLoc))
+            <ELSE> (s2 = StatementProd(fileName, errorLoc))) { s1 = new If(t.beginLine, t.beginColumn, e1, s1, s2);})
+        | ((t = <WHILE> <LEFT_PAREN>
+                (e1 = ExpressionProd(fileName, errorLoc) )
+           <RIGHT_PAREN> (s1 = StatementProd(fileName, errorLoc))) { ret = new While(t.beginLine, t.beginColumn, e1, s1);})
+        | ((t = <PRINT> <LEFT_PAREN> (e1 = ExpressionProd(fileName, errorLoc) ) <RIGHT_PAREN> <SEMICOLON>)
+                    { s1 = new Print(t.beginLine, t.beginColumn, e1);})
+        | ((t = <IDENTIFIER>)
+            (((<ASSIGNMENT> (e1 = ExpressionProd(fileName, errorLoc) ) <SEMICOLON>)
+            {s1  = new Assign(t.beginLine, t.beginColumn,
+                   new Identifier(t.beginLine, t.beginColumn, t.image),
+                   e1);})
+          | (<LEFT_BRACKET> (e1 = ExpressionProd(fileName, errorLoc)) <RIGHT_BRACKET>
+            <ASSIGNMENT> (e2 = ExpressionProd(fileName, errorLoc)) <SEMICOLON>
+            {s1 = new ArrayAssign(t.beginLine, t.beginColumn,
+                  new Identifier(t.beginLine, t.beginColumn, t.image),
+                  e1, e2);})))
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        s1 = null;
+    }
+    { return s1; }
+}
+
+// Entry point for handling Expressions
+// Mutually recursive with ExpressionPrime
+Expression ExpressionProd(String fileName, int[] errorLoc):
+{ Expression e = null;}
+{
+    try {
+        // Introduce E' and the terminals to have a single entry point
+        (e = ExpressionTerminal(fileName, errorLoc) ) (e = ExpPrime(fileName, e, errorLoc))
+    } catch (ParseException err){
+       handleError(err, SEMICOLON, fileName, errorLoc);
+       e = null;
+    }
+    {return e;}
+}
+
+// Handles the default, non-left recursive productions for Expressions
+Expression ExpressionTerminal(String fileName, int[] errorLoc):
+{ Token t; Expression e = null, rArg = null; ArrayList<Expression> recordArgs = new ArrayList<Expression>();}
+{
+    try{
+        LOOKAHEAD(2)
+        (<NEW> (t = <IDENTIFIER>)
+            { e = new NewObject(t.beginLine, t.beginColumn, new Identifier(t.beginLine, t.beginColumn, t.image));}
+             <LEFT_PAREN>
+                // we may have a record declaration, which means we need to call "_init"
+                (rArg = ExpressionProd(fileName, errorLoc) { recordArgs.add(rArg); }
+                ( <COMMA> rArg = ExpressionProd(fileName, errorLoc) { recordArgs.add(rArg); } )*
+                { e = new Call(t.beginLine, t.beginColumn, e, new Identifier(t.beginLine, t.beginColumn, "_init"), recordArgs); })? <RIGHT_PAREN>)
+        | ((<NEW> (t = <INT>) <LEFT_BRACKET> (e = ExpressionProd(fileName, errorLoc)) <RIGHT_BRACKET>)
+            { e = new NewArray(t.beginLine, t.beginColumn, e); })
+        | ((t = <EXCLAMATION>) ( e = ExpressionProd(fileName, errorLoc) ) {e = new Not(t.beginLine, t.beginColumn, e);})
+        | (<LEFT_PAREN> ( e = ExpressionProd(fileName, errorLoc) ) <RIGHT_PAREN>)
+        | (t = <INTEGER_LITERAL> {e = new IntegerLiteral(t.beginLine, t.beginColumn, Integer.parseInt(t.image));})
+        | (t = <TRUE> {e = new True(t.beginLine, t.beginColumn);} )
+        | (t = <FALSE> {e = new False(t.beginLine, t.beginColumn);})
+        | (t = <IDENTIFIER> {e = new IdentifierExp(t.beginLine, t.beginColumn, t.image);})
+        | (t = <THIS> {e = new This(t.beginLine, t.beginColumn);})
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        e = null;
+    }
+    {return e;}
+}
+
+// this serves as our E'
+Expression ExpPrime(String fileName, Expression ePrev, int[] errorLoc):
+{ Expression tree = null; Token t; }
+{
+    try{
+        { tree = ePrev; }
+        // all these calls will continue on, so we call ExpTree after they are done
+        (
+            // algorithmic trees are formed from this
+            (t = <PLUS> tree = AddIn(fileName, tree, t, errorLoc))
+            | (t = <MINUS> tree = SubIn(fileName, tree, t, errorLoc))
+            | (t = <MULTIPLY> tree = MultIn(fileName, tree, t, errorLoc))
+            | (t = <LESS_THAN> tree = LessThanIn(fileName, tree, t, errorLoc))
+            | (t = <BOOL_AND> tree = AndIn(fileName, tree, t, errorLoc))
+
+            // handle terminal mods (calls, length, or array lookup)
+            | (tree = ArrayAccess(fileName, tree, errorLoc))
+            | (tree = CallOrLength(fileName, tree, errorLoc))
+        ) ( tree = ExpPrime(fileName, tree, errorLoc))
+        // or just an empty production in the case that we don't want to produce anything
+        | (Empty() { tree = ePrev; })
+
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        tree = null;
+    }
+    {return tree;}
+}
+
+// evaluate:
+// * first, then +/-, then <, then &&
+// we just need to worry about what we evaluate *before* a given thing
+
+// Addition/Subtraction, Less than and Boolean And will all be evaluated after multiplication
+// so we don't have to touch the order
+Expression MultIn(String fileName, Expression ePrev, Token opSymbol, int[] errorLoc):
+{ Expression eNext = null; }
+{
+    try{
+        eNext = TerminalWithMods(fileName, errorLoc)
+            {eNext = new Times(opSymbol.beginLine, opSymbol.beginColumn, ePrev, eNext); }
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        eNext = null;
+    }
+    { return eNext; }
+}
+
+// Addition and subtraction are evaluated after multiplication, but before anything else
+// so grab all the multiplication symbols we can
+Expression AddIn(String fileName, Expression ePrev, Token opSymbol, int[] errorLoc):
+{ Expression eNext = null; Token t; }
+{
+    try{
+        eNext = TerminalWithMods(fileName, errorLoc)
+        // then we need to account for multiplication precedence
+        ( t = <MULTIPLY> eNext = MultIn(fileName, eNext, t, errorLoc) )*
+        { eNext = new Plus(opSymbol.beginLine, opSymbol.beginColumn, ePrev, eNext); }
+
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        eNext = null;
+    }
+    {return eNext;}
+}
+
+Expression SubIn(String fileName, Expression ePrev, Token opSymbol, int[] errorLoc):
+{ Expression eNext = null; Token t; }
+{
+    try{
+        eNext = TerminalWithMods(fileName, errorLoc)
+        // then we need to account for multiplication precedence
+        ( t = <MULTIPLY> eNext = MultIn(fileName, eNext, t, errorLoc) )*
+        { eNext = new Minus(opSymbol.beginLine, opSymbol.beginColumn, ePrev, eNext); }
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        eNext = null;
+    }
+    {return eNext;}
+}
+
+// Addition/Subtraction and Multiplication are all evaluated before Less Than
+// so grab all the multiplication symbols we can, as well as addition and subtraction
+// the addition and subtraction will grab all the following multiplications, so it'll properly form the tree
+Expression LessThanIn(String fileName, Expression ePrev, Token opSymbol, int[] errorLoc):
+{ Expression eNext = null; Token t; }
+{
+    try{
+        eNext = TerminalWithMods(fileName, errorLoc)
+            // we need to account for any functions which need to be evaluated before Less than
+            (
+                (t = <PLUS> eNext = AddIn(fileName, eNext, t, errorLoc))
+              | (t = <MINUS> eNext = SubIn(fileName, eNext, t, errorLoc))
+              | (t = <MULTIPLY> eNext = MultIn(fileName, eNext, t, errorLoc))
+            ) *
+        { eNext = new LessThan(opSymbol.beginLine, opSymbol.beginColumn, ePrev, eNext); }
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        eNext = null;
+    }
+    { return eNext; }
+}
+
+// and has the most precedence and will always be at the top of the tree if present
+// we'll have to account for:
+// addition/subtraction, multiplication, less than
+// thankfully our past functions should let us do this succinctly
+Expression AndIn(String fileName, Expression ePrev, Token opSymbol, int[] errorLoc):
+{ Expression eNext = null; Token t; }
+{
+    try{
+        eNext = TerminalWithMods(fileName, errorLoc)
+        (
+            (t = <LESS_THAN> eNext = LessThanIn(fileName, eNext, t, errorLoc))
+          | (t = <PLUS> eNext = AddIn(fileName, eNext, t, errorLoc))
+          | (t = <MINUS> eNext = SubIn(fileName, eNext, t, errorLoc))
+          | (t = <MULTIPLY> eNext = MultIn(fileName, eNext, t, errorLoc))
+        ) *
+
+        { eNext = new And(opSymbol.beginLine, opSymbol.beginColumn, ePrev, eNext); }
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        eNext = null;
+    }
+    { return eNext; }
+}
+
+// just to keep it clean, write these things together since they both start with "."
+Expression CallOrLength(String fileName, Expression origin, int[] errorLoc):
+{ Expression e = null; final ArrayList <Expression> es = new ArrayList(); Token t; }
+{
+    try{
+        (<DOT>
+            ((t = <IDENTIFIER>) <LEFT_PAREN>
+                ( e = ExpressionProd(fileName, errorLoc) { es.add(e); }
+                    (<COMMA> e = ExpressionProd(fileName, errorLoc) { es.add(e); } )*)?
+                <RIGHT_PAREN> {e = new Call(t.beginLine, t.beginColumn, origin,
+                                       new Identifier(t.beginLine, t.beginColumn, t.image), es);}
+          | (t = <LENGTH> {e = new ArrayLength(t.beginLine, t.beginColumn, origin);})))
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        e = null;
+    }
+    {return e;}
+}
+
+Expression ArrayAccess(String fileName, Expression idExp, int[] errorLoc):
+{ Expression e = null; Token t; }
+{
+    try {
+        (t = <LEFT_BRACKET>) (e = ExpressionProd(fileName, errorLoc) ) <RIGHT_BRACKET>
+            {e = new ArrayLookup(t.beginLine, t.beginColumn, idExp, e);}
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        e = null;
+    }
+    {return e;}
+}
+
+// A terminal could end with [<exp>] or .length or .<id>(<args>), and this is a nice clean way to get all those
+Expression TerminalMods(String fileName, Expression idExp, int[] errorLoc):
+{ Expression e = null; }
+{
+    try {
+        ( e = ArrayAccess(fileName, idExp, errorLoc))
+        | e = CallOrLength(fileName, idExp, errorLoc)
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        e = null;
+    }
+    {return e;}
+}
+
+// a terminal could theoretically have any number of mods
+// it isn't the grammar's job to determine if this is a good idea
+Expression TerminalWithMods(String fileName, int[] errorLoc):
+{ Expression e = null; }
+{
+    try {
+        e = ExpressionTerminal(fileName, errorLoc) (e = TerminalMods(fileName, e, errorLoc))*
+    } catch (ParseException err){
+        handleError(err, SEMICOLON, fileName, errorLoc);
+        e = null;
+    }
+    {return e;}
+}
+
+
+// Defines the epsilon production for expressions
+void Empty():
+{}
+{
+    {}
+}
+
+JAVACODE
+// Handles errors by skipping to skipTo
+// returns the number of errors reported
+void handleError(ParseException e, int skipTo, String fileName, int[] errors) {
+    Token t = e.currentToken;
+    String found = t.image;
+    System.err.printf("filename=%s:%d:%d -- Syntax error: encountered unexpected token: '%s'\n",
+                    fileName, t.beginLine, t.beginColumn, found);
+    errors[0]++;
+
+    if(t.kind == ILLEGAL){
+        System.err.printf("filename=%s:%d:%d -- Token Error: Encountered Illegal Token: '%s'\n",
+                            fileName, t.beginLine, t.beginColumn, found);
+        errors[0]++;
+    }
+
+    t = getNextToken();
+    while(t.kind != skipTo && t.kind != EOF){
+        t = getNextToken();
+        if(t.kind == ILLEGAL){
+            System.err.printf("filename=%s:%d:%d -- Token Error: Encountered Illegal Token: '%s'\n",
+                                fileName, t.beginLine, t.beginColumn, found);
+            errors[0]++;
+        }
+    }
+}
